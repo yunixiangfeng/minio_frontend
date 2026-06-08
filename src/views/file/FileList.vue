@@ -16,10 +16,14 @@
     </el-breadcrumb>
 
     <!-- 工具栏 -->
-    <div style="display: flex; justify-content: space-between; margin-bottom: 15px">
-      <div style="display: flex; gap: 8px">
+    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; align-items: center">
+      <div style="display: flex; gap: 8px; flex-wrap: wrap">
         <el-button type="primary" :icon="Upload" @click="openUpload">上传文件</el-button>
         <el-button :icon="FolderAdd" @click="handleCreateFolder">新建文件夹</el-button>
+        <el-button type="success" :icon="Download" @click="handleBatchDownload"
+          :disabled="selectedRows.length === 0">
+          批量下载 ({{ selectedRows.length }})
+        </el-button>
       </div>
       <div>
         <el-input
@@ -41,7 +45,15 @@
     />
 
     <!-- 文件表格 -->
-    <el-table :data="filteredList" border v-loading="loading" style="width: 100%">
+    <el-table
+      ref="tableRef"
+      :data="filteredList"
+      border
+      v-loading="loading"
+      style="width: 100%"
+      @selection-change="handleSelectionChange"
+    >
+      <el-table-column type="selection" width="45" />
       <el-table-column prop="name" label="名称" min-width="220" show-overflow-tooltip>
         <template #default="scope">
           <div style="display: flex; align-items: center; gap: 6px; cursor: pointer" @click="handleOpen(scope.row)">
@@ -62,8 +74,12 @@
           {{ scope.row.ext ? formatSize(scope.row.size) : '--' }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="260">
+      <el-table-column label="操作" width="320">
         <template #default="scope">
+          <el-button v-if="scope.row.ext" link @click="handleDownload(scope.row)">下载</el-button>
+          <el-button v-if="scope.row.ext === ''" link type="success" @click="handleFolderDownload(scope.row)">
+            打包下载
+          </el-button>
           <el-button link @click="handleRename(scope.row)">重命名</el-button>
           <el-button v-if="scope.row.ext" link @click="handleShare(scope.row)">分享</el-button>
           <el-button v-if="scope.row.ext" link @click="handleMove(scope.row)">移动</el-button>
@@ -98,7 +114,10 @@ import {
   createFolder,
   deleteFile,
   updateFileName,
-  moveFile
+  moveFile,
+  fileDownload,
+  fileDownloadBatch,
+  fileDownloadFolder
 } from '@/api/file'
 import { createShare } from '@/api/share'
 import UploadFile from '@/components/UploadFile.vue'
@@ -109,7 +128,8 @@ import {
   Search,
   Folder,
   Document,
-  HomeFilled
+  HomeFilled,
+  Download
 } from '@element-plus/icons-vue'
 
 const list = ref([])
@@ -119,6 +139,8 @@ const searchKeyword = ref('')
 const breadcrumbs = ref([])           // { identity, name, id }
 const currentFolderId = ref(0)        // 当前目录的 user_repository id（用于 parent_id）
 const currentFolderIdentity = ref('') // 当前目录的 identity（用于 API 查询）
+const tableRef = ref(null)
+const selectedRows = ref([])          // 多选行数据
 
 // 移动文件相关
 const showMoveDialog = ref(false)
@@ -149,6 +171,82 @@ const loadList = async () => {
 }
 
 const openUpload = () => (showUpload.value = true)
+
+// 多选变化
+const handleSelectionChange = (rows) => {
+  selectedRows.value = rows
+}
+
+// ========== 文件下载功能 ==========
+
+// 单文件下载
+const handleDownload = async (row) => {
+  try {
+    const res = await fileDownload(row.identity)
+    // 从 Content-Disposition 提取文件名或使用原始名称
+    let filename = row.name
+    if (row.ext && !row.name.endsWith(row.ext)) {
+      filename = row.name + '.' + row.ext
+    }
+    triggerBlobDownload(res, filename)
+  } catch (err) {
+    // 如果 blob 请求失败（如非 JSON 响应），尝试用 window.open 方式
+    if (err.response?.type === '' || !err.response?.data) {
+      // 直接打开 URL，让浏览器处理下载
+      const token = localStorage.getItem('token')
+      const url = `/user/file/download?identity=${row.identity}&token=${token}`
+      window.open(url, '_blank')
+    } else {
+      ElMessage.error('下载失败：' + (err.message || '未知错误'))
+    }
+  }
+}
+
+// 批量下载（选中项）
+const handleBatchDownload = async () => {
+  const files = selectedRows.value.filter(r => r.ext !== '') // 只取文件，排除文件夹
+  if (files.length === 0) {
+    ElMessage.warning('请选择要下载的文件（不支持批量下载文件夹）')
+    return
+  }
+
+  try {
+    ElMessage.info(`正在打包 ${files.length} 个文件，请稍候...`)
+    const identities = files.map(f => f.identity)
+    const res = await fileDownloadBatch(identities)
+    triggerBlobDownload(res, 'download.zip')
+    ElMessage.success('批量下载完成')
+  } catch (err) {
+    ElMessage.error('批量下载失败：' + (err.message || '未知错误'))
+  }
+}
+
+// 文件夹打包下载
+const handleFolderDownload = async (row) => {
+  try {
+    ElMessage.info(`正在打包文件夹「${row.name}」，请稍候...`)
+    const res = await fileDownloadFolder(row.identity)
+    triggerBlobDownload(res, row.name + '.zip')
+    ElMessage.success('文件夹打包下载完成')
+  } catch (err) {
+    ElMessage.error('文件夹打包失败：' + (err.message || '未知错误'))
+  }
+}
+
+// 通用的 Blob 触发下载方法
+const triggerBlobDownload = (blobData, filename) => {
+  const blob = new Blob([blobData])
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+// ========== 文件操作 ==========
 
 // 打开文件夹
 const handleOpen = (row) => {

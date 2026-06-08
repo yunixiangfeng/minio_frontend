@@ -27,9 +27,20 @@ const addRefreshSubscriber = (cb) => {
 
 // 响应拦截器：401 时自动刷新 token，失败才跳登录
 request.interceptors.response.use(
-  res => res.data,
+  res => {
+    // blob 类型直接返回 data（文件下载场景）
+    return res.data
+  },
   async err => {
     const originalRequest = err.config
+
+    // 如果是 blob 请求且出错，尝试读取错误信息
+    if (originalRequest?.responseType === 'blob' && err.response?.data instanceof Blob) {
+      const text = await err.response.data.text().catch(() => '')
+      if (text) {
+        try { err.response.data = JSON.parse(text) } catch { /* 非 JSON 错误 */ }
+      }
+    }
 
     if (err.response?.status === 401 && !originalRequest._retry) {
       const refreshToken = localStorage.getItem('refresh_token')

@@ -15,3 +15,19 @@ export const updateFileName = (data) => request.post('/user/file/name/update', d
 export const deleteFile = (data) => request.delete('/user/file/delete', { data })
 export const moveFile = (data) => request.put('/user/file/move', data)
 export const userRepositorySave = (data) => request.post('/user/repository/save', data)
+
+// 单文件下载（返回 blob）
+export const fileDownload = (identity) => request.get('/user/file/download', {
+  params: { identity },
+  responseType: 'blob'
+})
+
+// 批量文件下载打包 zip
+export const fileDownloadBatch = (identities) => request.post('/user/file/download/batch', { identities }, {
+  responseType: 'blob'
+})
+
+// 文件夹打包下载
+export const fileDownloadFolder = (identity) => request.post('/user/file/download/folder', { identity }, {
+  responseType: 'blob'
+})
