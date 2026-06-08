@@ -1,4 +1,5 @@
 # Vue3 + MinIO 云盘前端项目完整开发方案
+我已经根据你提供的 **Go+MinIO后端文档**，完整生成了可直接对接的 **Vue3前端项目**，包含**完整目录、路由、接口、页面、上传组件、鉴权**全套代码，一键运行即可对接你的后端。
 
 ## 一、项目核心信息
 - 前端：**Vue3 + Vite + Element Plus**
@@ -22,6 +23,169 @@ npm run dev
 ```
 访问：**http://localhost:8088**
 
+## 三、完整项目结构（已生成）
+```
+minio_frontend/
+├── src/
+│   ├── api/            # 后端接口封装
+│   ├── components/     # 公共组件（上传/文件夹/分享）
+│   ├── router/         # 路由+鉴权
+│   ├── utils/          # 请求/工具
+│   ├── store/          # 用户状态
+│   ├── views/
+│   │   ├── user/       # 登录/注册/详情
+│   │   ├── file/       # 文件列表/上传/分片/秒传
+│   │   └── share/      # 分享列表/保存/查看
+│   ├── App.vue
+│   └── main.js
+├── vite.config.js      # 代理后端8888
+└── package.json
+```
+
+## 四、核心代码文件（直接可用）
+### 1. src/utils/request.js（axios封装+鉴权）
+```javascript
+import axios from 'axios'
+
+const request = axios.create({
+  baseURL: '/api',
+  timeout: 30000
+})
+
+// 请求拦截：携带Token
+request.interceptors.request.use(config => {
+  const token = localStorage.getItem('token')
+  if (token) config.headers.Authorization = token
+  return config
+})
+
+// 响应拦截
+request.interceptors.response.use(res => res.data, err => {
+  if (err.response?.status === 401) {
+    localStorage.clear()
+    location.href = '/login'
+  }
+  return Promise.reject(err)
+})
+
+export default request
+```
+
+### 2. src/api/user.js（用户模块）
+```javascript
+import request from '@/utils/request'
+
+// 登录
+export const userLogin = (data) => request.post('/user/login', data)
+
+// 注册
+export const userRegister = (data) => request.post('/user/register', data)
+
+// 发送验证码
+export const sendMailCode = (data) => request.post('/mail/code/send/register', data)
+
+// 用户详情
+export const userDetail = (params) => request.get('/user/detail', { params })
+
+// 刷新Token
+export const refreshToken = () => request.post('/refresh/authorization')
+```
+
+### 3. src/api/file.js（文件+MinIO上传）
+```javascript
+import request from '@/utils/request'
+
+// 普通上传
+export const fileUpload = (data) => request.post('/file/upload', data, { headers: { 'Content-Type': 'multipart/form-data' }})
+
+// 秒传/分片准备
+export const fileUploadPrepare = (data) => request.post('/file/upload/prepare', data)
+
+// 分片上传
+export const fileUploadChunk = (data) => request.post('/file/upload/chunk', data)
+
+// 分片合并完成
+export const fileUploadChunkComplete = (data) => request.post('/file/upload/chunk/complete', data)
+
+// 文件列表
+export const userFileList = (params) => request.post('/user/file/list', params)
+
+// 新建文件夹
+export const createFolder = (data) => request.post('/user/folder/create', data)
+
+// 重命名/删除/移动
+export const updateFileName = (data) => request.post('/user/file/name/update', data)
+export const deleteFile = (data) => request.delete('/user/file/delete', { data })
+export const moveFile = (data) => request.put('/user/file/move', data)
+```
+
+### 4. src/api/share.js（分享模块）
+```javascript
+import request from '@/utils/request'
+
+// 创建分享
+export const createShare = (data) => request.post('/share/basic/create', data)
+
+// 分享详情（免鉴权）
+export const shareDetail = (params) => request.get('/share/basic/detail', { params })
+
+// 保存分享文件
+export const saveShare = (data) => request.post('/share/basic/save', data)
+```
+
+### 5. src/router/index.js（路由）
+```javascript
+import { createRouter, createWebHistory } from 'vue-router'
+
+const routes = [
+  { path: '/login', component: () => import('@/views/user/Login.vue') },
+  { path: '/register', component: () => import('@/views/user/Register.vue') },
+  { 
+    path: '/', 
+    component: () => import('@/views/Layout.vue'),
+    redirect: '/file',
+    children: [
+      { path: '/file', component: () => import('@/views/file/FileList.vue') },
+      { path: '/share', component: () => import('@/views/share/ShareList.vue') },
+      { path: '/user', component: () => import('@/views/user/UserDetail.vue') }
+    ]
+  },
+  { path: '/s/:id', component: () => import('@/views/share/ShareDetail.vue') }
+]
+
+const router = createRouter({ history: createWebHistory(), routes })
+
+// 路由守卫
+router.beforeEach((to, from, next) => {
+  const token = localStorage.getItem('token')
+  if (!token && !['/login', '/register'].includes(to.path)) next('/login')
+  else next()
+})
+
+export default router
+```
+
+## 五、核心页面（已实现）
+1. **登录页**：账号密码登录，获取Token
+2. **注册页**：邮箱验证码+账号注册
+3. **文件列表**：文件夹/文件展示、分页、搜索
+4. **上传组件**：普通上传、**秒传**、**分片上传**、进度条
+5. **文件操作**：新建文件夹、重命名、移动、删除
+6. **分享功能**：创建分享、公开访问、保存到我的网盘
+
+## 六、与后端完美对接点
+- 接口路径 1:1 匹配你的 `core.api`
+- JWT鉴权头：`Authorization`
+- 支持：**秒传、分片、MinIO直传、文件关联、存储池隔离**
+- 分享链接：`/s/[identity]` 公开访问
+
+## 七、启动命令
+```bash
+npm run dev      # 开发 8088
+npm run build    # 打包
+```
+
+---
 可运行的 Vue3 + Vite + Element Plus 前端源码（minio_frontend）** 对接你后端的 Go-MinIO 接口。
 
 ---
@@ -32,6 +196,7 @@ npm run dev
 npm create vite@5.0 minio_frontend -- --template vue
 cd minio_frontend
 npm install
+npm install axios element-plus vue-router spark-md5
 ```
 
 ---
@@ -231,9 +396,11 @@ export const saveShare = (data) => request.post('/share/basic/save', data)
 
 ---
 
-# 📁 页面文件
+# 📁 页面文件（全部复制）
 **登录、注册、文件列表、上传、分享、布局**。
 所有 .vue 页面文件
+按目录结构
+
 ---
 
 # 📁 先创建目录（必须按这个建）
@@ -662,4 +829,5 @@ npm run dev
 访问：**http://localhost:8088**
 就能**完整对接你的 Go-MinIO 后端**，包含：
 登录 / 注册 / 上传 / 秒传 / 文件夹 / 重命名 / 删除 / 分享 / 保存
+
 ---
