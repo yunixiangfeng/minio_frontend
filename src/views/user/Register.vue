@@ -16,9 +16,15 @@
               {{ countdown > 0 ? `${countdown}s 后重试` : '获取验证码' }}
             </el-button>
           </div>
+          <!-- 邮件无法送达时直接显示验证码 -->
+          <div v-if="fallbackCode" style="margin-top: 8px; padding: 8px 12px; background: #fff7e6; border: 1px solid #ffc069; border-radius: 4px; font-size: 13px">
+            <span style="color: #d46b08">⚠ 邮件发送失败，您的验证码为：</span>
+            <strong style="font-size: 18px; color: #fa8c16; margin: 0 6px; letter-spacing: 3px">{{ fallbackCode }}</strong>
+            <el-button size="small" link @click="form.code = fallbackCode; ElMessage.success('已自动填入验证码')">点击自动填入</el-button>
+          </div>
         </el-form-item>
         <el-form-item>
-          <el-input v-model="form.password" type="password" placeholder="密码" />
+          <el-input v-model="form.password" type="password" placeholder="密码" show-password />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" native-type="submit" style="width:100%" :loading="submitting">
@@ -44,6 +50,7 @@ const form = ref({ name: '', email: '', code: '', password: '' })
 const sending = ref(false)
 const submitting = ref(false)
 const countdown = ref(0)
+const fallbackCode = ref('')  // 邮件失败时后端返回的验证码
 
 const startCountdown = () => {
   countdown.value = 60
@@ -59,9 +66,16 @@ const sendCode = async () => {
     return
   }
   sending.value = true
+  fallbackCode.value = ''
   try {
-    await sendMailCode({ email: form.value.email })
-    ElMessage.success('验证码已发送，请查收邮件')
+    const res = await sendMailCode({ email: form.value.email })
+    if (res && res.code) {
+      // 邮件发送失败，后端返回了验证码（开发/测试环境降级处理）
+      fallbackCode.value = res.code
+      ElMessage.warning('邮件发送失败，验证码已显示在下方，请直接填入')
+    } else {
+      ElMessage.success('验证码已发送，请查收邮件（5分钟内有效）')
+    }
     startCountdown()
   } catch (err) {
     ElMessage.error('发送失败：' + (err?.response?.data?.message || err?.message || '请检查邮箱是否正确'))
