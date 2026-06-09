@@ -89,18 +89,34 @@
     </el-table>
 
     <!-- 移动文件对话框 -->
-    <el-dialog v-model="showMoveDialog" title="移动文件" width="400px">
-      <p style="margin-bottom: 10px">选择目标文件夹：</p>
-      <el-tree
-        :data="folderTree"
-        :props="{ label: 'name', children: 'children' }"
-        node-key="identity"
-        @node-click="selectMoveTarget"
-        highlight-current
-      />
+    <el-dialog v-model="showMoveDialog" title="移动文件到..." width="420px">
+      <p style="margin-bottom: 10px; color: #666">
+        正在移动：<strong>{{ movingRow?.name }}</strong>
+      </p>
+      <!-- 根目录选项 -->
+      <el-radio
+        v-model="moveTargetIdentity"
+        label="__root__"
+        style="display: block; margin-bottom: 8px; padding: 8px; border: 1px solid #eee; border-radius: 4px"
+      >
+        📁 根目录
+      </el-radio>
+      <!-- 所有文件夹列表 -->
+      <div v-if="folderTree.length === 0" style="color: #999; padding: 10px 0">
+        暂无其他文件夹
+      </div>
+      <el-radio
+        v-for="folder in folderTree"
+        :key="folder.identity"
+        v-model="moveTargetIdentity"
+        :label="folder.identity"
+        style="display: block; margin-bottom: 6px; padding: 8px; border: 1px solid #eee; border-radius: 4px"
+      >
+        📁 {{ folder.name }}
+      </el-radio>
       <template #footer>
         <el-button @click="showMoveDialog = false">取消</el-button>
-        <el-button type="primary" @click="confirmMove">确认移动</el-button>
+        <el-button type="primary" @click="confirmMove" :disabled="!moveTargetIdentity">确认移动</el-button>
       </template>
     </el-dialog>
   </div>
@@ -351,9 +367,15 @@ const handleRename = async (row) => {
 const handleMove = async (row) => {
   movingRow.value = row
   moveTargetIdentity.value = ''
-  // 加载文件夹树
-  const res = await userFolderList({ identity: '' })
-  folderTree.value = buildFolderTree(res.list || [])
+  // 加载所有文件夹（不传 identity = 加载全部）
+  try {
+    const res = await userFolderList({ identity: '' })
+    // 过滤掉自身（不能移动到自己）
+    folderTree.value = (res.list || []).filter(f => f.identity !== row.identity)
+  } catch (err) {
+    ElMessage.error('加载文件夹列表失败：' + (err?.message || ''))
+    folderTree.value = []
+  }
   showMoveDialog.value = true
 }
 
@@ -366,18 +388,19 @@ const confirmMove = async () => {
     ElMessage.warning('请选择目标文件夹')
     return
   }
-  await moveFile({
-    identity: movingRow.value.identity,
-    parent_identity: moveTargetIdentity.value
-  })
-  ElMessage.success('移动成功')
-  showMoveDialog.value = false
-  loadList()
-}
-
-// 将扁平列表构建为树结构（文件夹选择用）
-const buildFolderTree = (folders) => {
-  return folders.map(f => ({ identity: f.identity, name: f.name }))
+  try {
+    // __root__ 表示移动到根目录（parent_identity 传空字符串）
+    const targetIdentity = moveTargetIdentity.value === '__root__' ? '' : moveTargetIdentity.value
+    await moveFile({
+      identity: movingRow.value.identity,
+      parent_identity: targetIdentity
+    })
+    ElMessage.success('移动成功')
+    showMoveDialog.value = false
+    loadList()
+  } catch (err) {
+    ElMessage.error('移动失败：' + (err?.response?.data?.message || err?.message || ''))
+  }
 }
 
 // 文件大小格式化
